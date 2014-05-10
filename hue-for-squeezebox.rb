@@ -1,7 +1,7 @@
 #!/usr/bin/env ruby
 
 require 'echowrap'
-require 'hue'
+require 'huey'
 require 'squeezer'
 
 # Color mappings based off http://wagneric.com/audiocolors.html
@@ -35,7 +35,7 @@ Echowrap.configure do |config|
 end
 
 # Create clients
-hue = Hue::Client.new
+bulbs = Huey::Bulb.find_all(nil)
 squeeze = Squeezer::Client.new
 
 # Initialize song
@@ -58,19 +58,45 @@ while true do
       # Just in case the song doesn't exist in Echonest
       begin
 
-        # Return metadata for song, pull out key and mode
+        # Return metadata for song, pull out key, mode, tempo, and time signature
         metadata = Echowrap.song_search(:artist => song[:artist], :title => song[:title], :bucket => 'audio_summary').first.audio_summary
         key = metadata.key
         mode = metadata.mode
+        tempo = metadata.tempo
+        time_signature = metadata.time_signature
 
         # Adjust saturation based on mode (major keys are lower saturation, minor keys are higher)
         saturation = mode.zero? ? 128 : 254
 
-        # Adjust hue based on key
-        hue.lights.each do |light|
-          light.set_state(:hue => colors[key][:hue], :brightness => colors[key][:bri], :saturation => saturation, :color_mode => "hs")
-        end
+        # Set initial hue and saturation based off key and mode
+        bulbs.update(hue: colors[key][:hue], bri: colors[key][:bri], sat: saturation, transitiontime: (((1/(tempo/60))*time_signature)*10).to_i)
 
+        # Further adjust saturation based off tempo and time signature (transition times should be approximately one song measure)
+        while squeeze.players.first.playing? and Squeezer::Models::Model.extract_records(Squeezer::Connection.exec("#{squeeze.players.first.id} status -")).first == song do
+
+          # Sleep for one measure
+          sleep (1/(tempo/60))*time_signature
+
+          # Check current saturation of bulbs and vary saturation up or down depending on mode
+          get_saturation = bulbs.first.sat
+          if get_saturation == 254
+            set_saturation = 210
+          elsif get_saturation == 128
+            set_saturation = 210
+          else
+            if saturation == 254
+              set_saturation = 254
+            else
+              set_saturation = 128
+            end
+          end
+
+          # Set saturation with transition time equaling approximately one song measure
+          bulbs.update(hue: colors[key][:hue], bri: colors[key][:bri], sat: set_saturation, transitiontime: (((1/(tempo/60))*time_signature)*10).to_i)
+
+        end
+      
+      # Just in case some attribute doesn't exist in Echonest
       rescue
       end    
 
